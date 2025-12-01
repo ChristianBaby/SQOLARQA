@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ScholarQA - Chat con PDFs Académicos</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 900px;
+            width: 100%;
+            padding: 40px;
+        }
+        
+        h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+        }
+        
+        .status {
+            background: #f0f0f0;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .status.ok {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .section {
+            margin-bottom: 30px;
+        }
+        
+        .section h2 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.5em;
+        }
+        
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 10px;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .upload-area:hover {
+            background: #f8f8ff;
+            border-color: #764ba2;
+        }
+        
+        .upload-area.dragover {
+            background: #f0f0ff;
+            border-color: #764ba2;
+        }
+        
+        input[type="file"] {
+            display: none;
+        }
+        
+        .chat-area {
+            background: #f9f9f9;
+            border-radius: 10px;
+            padding: 20px;
+            min-height: 300px;
+            max-height: 400px;
+            overflow-y: auto;
+            margin-bottom: 15px;
+        }
+        
+        .message {
+            margin-bottom: 15px;
+            padding: 12px;
+            border-radius: 8px;
+        }
+        
+        .message.user {
+            background: #667eea;
+            color: white;
+            margin-left: 50px;
+        }
+        
+        .message.assistant {
+            background: white;
+            border: 1px solid #ddd;
+            margin-right: 50px;
+        }
+        
+        .input-group {
+            display: flex;
+            gap: 10px;
+        }
+        
+        input[type="text"] {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+        
+        button {
+            padding: 12px 30px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            background: #764ba2;
+            transform: translateY(-2px);
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .loading {
+            text-align: center;
+            color: #667eea;
+            padding: 20px;
+        }
+        
+        .sources {
+            font-size: 0.85em;
+            color: #666;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #eee;
+        }
+        
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎓 ScholarQA</h1>
+        <p class="subtitle">Chat inteligente con tus PDFs académicos - 100% gratis y local</p>
+        
+        <div id="status" class="status">
+            Verificando sistema...
+        </div>
+        
+        <div class="section">
+            <h2>📤 Subir PDF</h2>
+            <div class="upload-area" id="uploadArea">
+                <p>📄 Arrastra un PDF aquí o haz clic para seleccionar</p>
+                <input type="file" id="fileInput" accept=".pdf">
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>💬 Hacer Preguntas</h2>
+            <div class="chat-area" id="chatArea">
+                <div class="message assistant">
+                    Hola! Sube un PDF académico y haré preguntas sobre su contenido. 
+                    Estoy corriendo 100% en tu máquina, sin enviar datos a internet.
+                </div>
+            </div>
+            <div class="input-group">
+                <input 
+                    type="text" 
+                    id="questionInput" 
+                    placeholder="Escribe tu pregunta sobre el PDF..."
+                    disabled
+                >
+                <button id="askButton" disabled>Preguntar</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const chatArea = document.getElementById('chatArea');
+        const questionInput = document.getElementById('questionInput');
+        const askButton = document.getElementById('askButton');
+        const statusDiv = document.getElementById('status');
+        
+        let systemReady = false;
+        
+        // Verificar estado del sistema
+        async function checkStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                
+                systemReady = data.components.llm_engine;
+                
+                if (systemReady) {
+                    statusDiv.className = 'status ok';
+                    statusDiv.textContent = `✅ Sistema listo - ${data.documents_count} chunks en base de datos`;
+                } else {
+                    statusDiv.className = 'status';
+                    statusDiv.textContent = '⚠️ Modelo LLM no disponible. Descarga un modelo .gguf siguiendo las instrucciones del README.';
+                }
+            } catch (error) {
+                statusDiv.className = 'status';
+                statusDiv.textContent = '❌ Error conectando con el servidor';
+            }
+        }
+        
+        checkStatus();
+        
+        // Upload handlers
+        uploadArea.addEventListener('click', () => fileInput.click());
+        
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+        
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) handleFile(files[0]);
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) handleFile(e.target.files[0]);
+        });
+        
+        async function handleFile(file) {
+            if (!file.name.endsWith('.pdf')) {
+                alert('Solo se aceptan archivos PDF');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            uploadArea.innerHTML = '<div class="loading">⏳ Procesando PDF...</div>';
+            
+            try {
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    uploadArea.innerHTML = `<p>✅ ${file.name} procesado (${data.chunks} chunks)</p>`;
+                    questionInput.disabled = false;
+                    askButton.disabled = !systemReady;
+                    checkStatus();
+                } else {
+                    throw new Error(data.error);
+                }
+            } catch (error) {
+                uploadArea.innerHTML = `<p>❌ Error: ${error.message}</p>`;
+            }
+        }
+        
+        // Chat handlers
+        async function askQuestion() {
+            const question = questionInput.value.trim();
+            if (!question) return;
+            
+            // Mostrar pregunta del usuario
+            addMessage(question, 'user');
+            questionInput.value = '';
+            questionInput.disabled = true;
+            askButton.disabled = true;
+            
+            // Mostrar loading
+            const loadingId = addMessage('Pensando...', 'assistant', true);
+            
+            try {
+                const response = await fetch('/api/ask', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question })
+                });
+                
+                const data = await response.json();
+                
+                // Remover loading
+                document.getElementById(loadingId).remove();
+                
+                if (data.answer) {
+                    let message = data.answer;
+                    if (data.sources && data.sources.length > 0) {
+                        const sources = data.sources.map(s => s.source).filter((v, i, a) => a.indexOf(v) === i);
+                        message += `<div class="sources">📚 Fuentes: ${sources.join(', ')}</div>`;
+                    }
+                    addMessage(message, 'assistant');
+                } else {
+                    throw new Error(data.error);
+                }
+            } catch (error) {
+                document.getElementById(loadingId).remove();
+                addMessage(`❌ Error: ${error.message}`, 'assistant');
+            } finally {
+                questionInput.disabled = false;
+                askButton.disabled = false;
+                questionInput.focus();
+            }
+        }
+        
+        function addMessage(text, type, isLoading = false) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            messageDiv.innerHTML = text;
+            
+            if (isLoading) {
+                const id = 'loading-' + Date.now();
+                messageDiv.id = id;
+                chatArea.appendChild(messageDiv);
+                chatArea.scrollTop = chatArea.scrollHeight;
+                return id;
+            }
+            
+            chatArea.appendChild(messageDiv);
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+        
+        askButton.addEventListener('click', askQuestion);
+        questionInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') askQuestion();
+        });
+    </script>
+</body>
+</html>
