@@ -8,7 +8,7 @@ from pathlib import Path
 import time
 
 # Añadir src al path
-sys.path.insert(0, str(Path(__file__).parent / 'src'))
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from utils.config import Config
 from utils.logger import setup_logging

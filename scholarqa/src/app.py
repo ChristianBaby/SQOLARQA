@@ -34,27 +34,86 @@ pdf_processor = None
 embedding_engine = None
 vector_store = None
 llm_engine = None
+initialization_lock = False  # Para evitar inicializaciones concurrentes
 
 
 def initialize_components():
     """Inicializa los componentes de IA (lazy loading)"""
-    global pdf_processor, embedding_engine, vector_store, llm_engine
+    global pdf_processor, embedding_engine, vector_store, llm_engine, initialization_lock
     
-    if pdf_processor is None:
+    # Si ya están inicializados, no hacer nada
+    if pdf_processor is not None and embedding_engine is not None and vector_store is not None:
+        return
+    
+    # Evitar inicializaciones concurrentes
+    if initialization_lock:
+        logger.info("Inicialización en progreso, esperando...")
+        import time
+        max_wait = 120  # Esperar máximo 120 segundos (descarga de modelos)
+        waited = 0
+        while initialization_lock and waited < max_wait:
+            time.sleep(1)
+            waited += 1
+        if initialization_lock:
+            raise RuntimeError("Timeout esperando inicialización de componentes")
+        return
+    
+    initialization_lock = True
+    
+    try:
         logger.info("Inicializando componentes...")
-        pdf_processor = PDFProcessor()
-        embedding_engine = EmbeddingEngine(Config.EMBEDDING_MODEL)
-        vector_store = VectorStore(
-            str(Config.get_vector_store_path()),
+        
+        # Variables temporales
+        temp_pdf_processor = None
+        temp_embedding_engine = None
+        temp_vector_store = None
+        temp_llm_engine = None
+        
+        # Inicializar PDF Processor
+        logger.info("Inicializando PDF Processor...")
+        temp_pdf_processor = PDFProcessor()
+        logger.info("✓ PDF Processor inicializado")
+        
+        # Inicializar Embedding Engine
+        logger.info(f"Inicializando Embedding Engine: {Config.EMBEDDING_MODEL}")
+        temp_embedding_engine = EmbeddingEngine(Config.EMBEDDING_MODEL)
+        logger.info("✓ Embedding Engine inicializado")
+        
+        # Inicializar Vector Store
+        vector_store_path = Config.get_vector_store_path()
+        logger.info(f"Inicializando Vector Store en: {vector_store_path}")
+        temp_vector_store = VectorStore(
+            str(vector_store_path),
             Config.COLLECTION_NAME
         )
+        logger.info("✓ Vector Store inicializado")
         
         # LLM es opcional
         try:
-            llm_engine = LLMEngine(str(Config.get_llm_model_path()))
+            llm_model_path = Config.get_llm_model_path()
+            logger.info(f"Inicializando LLM Engine: {llm_model_path}")
+            temp_llm_engine = LLMEngine(str(llm_model_path))
+            logger.info("✓ LLM Engine inicializado")
         except FileNotFoundError as e:
             logger.warning(f"Modelo LLM no disponible: {e}")
-            llm_engine = None
+            temp_llm_engine = None
+        except Exception as e:
+            logger.error(f"Error inicializando LLM Engine: {e}", exc_info=True)
+            temp_llm_engine = None
+        
+        # Asignar a variables globales solo si todo fue exitoso
+        pdf_processor = temp_pdf_processor
+        embedding_engine = temp_embedding_engine
+        vector_store = temp_vector_store
+        llm_engine = temp_llm_engine
+            
+        logger.info("✓ Todos los componentes inicializados correctamente")
+        
+    except Exception as e:
+        logger.error(f"Error crítico inicializando componentes: {e}", exc_info=True)
+        raise
+    finally:
+        initialization_lock = False
 
 
 @app.route('/')
@@ -85,6 +144,11 @@ def upload_pdf():
     """Sube y procesa un PDF"""
     try:
         initialize_components()
+        
+        # Verificar que los componentes estén inicializados
+        if vector_store is None:
+            logger.error("Vector store no inicializado correctamente")
+            return jsonify({'error': 'Sistema no inicializado. Por favor reinicia el servidor.'}), 503
         
         if 'file' not in request.files:
             return jsonify({'error': 'No se envió ningún archivo'}), 400
